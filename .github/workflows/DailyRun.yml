@@ -1,48 +1,51 @@
-name: SK Hynix Valuation Tracker
+name: 周期股估值自动监控
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 每天 UTC 2点（首尔时间上午11点）运行
+    # 每天收盘后自动运行（UTC时间10:00 = 北京时间18:00）
+    - cron: '0 10 * * 1-5'
   workflow_dispatch:
+    # 允许在 GitHub 网页上手动触发
 
-# 必须显式声明写入权限，否则机器人无法 Push 代码
 permissions:
-  contents: write
+  contents: write # 必须开启写入权限，否则算出来的表格传不回仓库
 
 jobs:
-  run-and-record:
+  monitor_and_log:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install yfinance pandas requests beautifulsoup4  # <--- 加上这两个
-          
-          
-      - name: Run Python Tracker
-        run: python dynamic-peg.py
+    - name: 检出仓库代码
+      uses: actions/checkout@v4
+
+    - name: 设置 Python 环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 安装依赖库
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance pandas requests
+
+    - name: 运行估值监控脚本
+      env:
+        # 这里是整个链路的桥梁：从 GitHub Secrets 里读取密钥并塞入环境变量
+        FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+      run: |
+        python valuation_monitor.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
+
+    - name: 将新生成的表格和缓存自动推回仓库
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
-      - name: Commit and Push CSV updates
-        run: |
-          # 配置机器人的 Git 身份
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # 暂存生成的 CSV 文件
-          #git add hynix_valuation_log.csv
-          git add *.csv  # <--- 推荐改成这样，一劳永逸
-          
-          
-          # 提交更改（如果数据没变导致无可提交内容，|| exit 0 可防止工作流报错终止）
-          git commit -m "Auto-update Stocks valuation log [skip ci]" || exit 0
-          
-          # 推送到仓库
+        if [ -n "$(git status --porcelain)" ]; then
+          # 同时提交 CSV 表格和当天的 fmp_cache JSON 文件
+          git add valuation_log.csv fmp_cache/
+          git commit -m "🤖 自动更新: 周期股估值数据表格 [$(date +'%Y-%m-%d %H:%M')]"
           git push
+          echo "✅ 成功推送最新数据到仓库！"
+        else
+          echo "🔵 数据未发生变化，无需推送。"
+        fi
