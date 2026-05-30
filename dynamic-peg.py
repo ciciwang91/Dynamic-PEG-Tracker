@@ -7,21 +7,24 @@ import yfinance as yf
 
 def check_if_market_open(symbol):
     """
-    智能休市拦截器：探测最新 K 线日期，判断当天是否为节假日
+    智能休市拦截器：探测最新 K 线日期。如果是手动测试，直接放行。
     """
+    # 💡 官方后门：检测如果是你手动点击运行的，直接无视休市规则！
+    if os.environ.get("TRIGGER_REASON") == "workflow_dispatch":
+        print(f"  [手动测试] 🚀 检测到手动触发，无视 {symbol} 休市状态，强制放行！")
+        return True
+
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="1d")
         if hist.empty:
-            return True # 如果探测失败，放行给主程序报错
+            return True 
             
         last_trade_date = hist.index[0].date()
-        # GitHub Actions 在 UTC 22:00 运行，此时无论美股还是韩股，
-        # 如果当天开市，其最新交易日必然等于当前的 UTC 日期。
         today_utc = datetime.now(timezone.utc).date()
         
         if last_trade_date != today_utc:
-            print(f"  [休市拦截] 🛑 {symbol} 最新交易停留在 {last_trade_date}。今日为节假日休市，不记录冗余数据。")
+            print(f"  [休市拦截] 🛑 {symbol} 最新交易停留在 {last_trade_date}。今日为休市日，跳过。")
             return False
         return True
     except Exception:
