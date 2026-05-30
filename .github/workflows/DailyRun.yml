@@ -31,6 +31,8 @@ jobs:
         pip install yfinance pandas requests
 
     - name: 运行估值监控脚本
+      env:
+        TRIGGER_REASON: ${{ github.event_name }} # 👈 告诉 Python 是怎么触发的
       run: |
         python  dynamic-peg.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
 
