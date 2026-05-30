@@ -38,8 +38,8 @@ jobs:
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
         if [ -n "$(git status --porcelain)" ]; then
-          # 同时提交 CSV 表格和当天的 fmp_cache JSON 文件
-          git add valuation_log.csv fmp_cache/
+          # 提交 CSV 表格文件
+          git add valuation_log.csv
           git commit -m "🤖 自动更新: 周期股估值数据表格 [$(date +'%Y-%m-%d %H:%M')]"
           git push
           echo "✅ 成功推送最新数据到仓库！"
