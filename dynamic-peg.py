@@ -1,9 +1,31 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
+
+def check_if_market_open(symbol):
+    """
+    智能休市拦截器：探测最新 K 线日期，判断当天是否为节假日
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")
+        if hist.empty:
+            return True # 如果探测失败，放行给主程序报错
+            
+        last_trade_date = hist.index[0].date()
+        # GitHub Actions 在 UTC 22:00 运行，此时无论美股还是韩股，
+        # 如果当天开市，其最新交易日必然等于当前的 UTC 日期。
+        today_utc = datetime.now(timezone.utc).date()
+        
+        if last_trade_date != today_utc:
+            print(f"  [休市拦截] 🛑 {symbol} 最新交易停留在 {last_trade_date}。今日为节假日休市，不记录冗余数据。")
+            return False
+        return True
+    except Exception:
+        return True
 
 def get_naver_valuation_and_growth(symbol):
     """韩国本土爬虫：抓取 PE、PB 及最新一季 EPS 同比增速"""
@@ -54,9 +76,14 @@ def get_naver_valuation_and_growth(symbol):
         return None, None, None
 
 def fetch_stock_data(symbol):
-    """榨干雅虎价值引擎：尝试 8 季 TTM -> 降级 5 季同比 -> 韩股 Naver"""
+    """自适应数据抓取引擎"""
+    print(f"\n正在获取 {symbol} 的数据...")
+    
+    # 💡 核心优化：先过安检，遇到节假日直接踢出
+    if not check_if_market_open(symbol):
+        return None, None, None
+        
     try:
-        print(f"正在获取 {symbol} 的数据...")
         ticker = yf.Ticker(symbol)
         info = ticker.info
         
@@ -79,9 +106,7 @@ def fetch_stock_data(symbol):
                 dynamic_growth_pct = naver_growth
                 data_source = "Naver (单季同比)"
         else:
-            # 💡 [雅虎榨干引擎]
             try:
-                # 获取尽可能多的季度财报（默认可能只有 4-5 季，但有时会给更多）
                 q_stmt = ticker.quarterly_income_stmt
                 eps_row = None
                 for row_name in ['Basic EPS', 'Diluted EPS', 'BasicEPS', 'DilutedEPS']:
@@ -90,25 +115,20 @@ def fetch_stock_data(symbol):
                         break
                 
                 if eps_row is not None:
-                    # 筛网 1：如果大发慈悲给了 8 季度以上，算完美 TTM 滚动
                     if len(eps_row) >= 8:
-                        # 雅虎的数据通常从新到旧排列
                         current_ttm_eps = eps_row.iloc[0:4].sum()
                         prior_ttm_eps = eps_row.iloc[4:8].sum()
                         if current_ttm_eps > 0 and prior_ttm_eps > 0:
                             dynamic_growth_pct = ((current_ttm_eps - prior_ttm_eps) / prior_ttm_eps) * 100
                             data_source = "Yahoo (8季 TTM)"
-                            print(f"  -> 💎 惊喜！雅虎给足了 8 季度，成功计算 TTM 滚动增速。")
-                            
-                    # 筛网 2：如果只有 5-7 个季度，算单季同比兜底
+                            print(f"  -> 💎 惊喜！成功拉取 8 季度数据，启用 TTM 滚动增速。")
                     elif len(eps_row) >= 5:
-                        q1_eps = eps_row.iloc[0] # 最新季
-                        q5_eps = eps_row.iloc[4] # 去年同期
+                        q1_eps = eps_row.iloc[0] 
+                        q5_eps = eps_row.iloc[4] 
                         if q1_eps > 0 and q5_eps > 0:
                             dynamic_growth_pct = ((q1_eps - q5_eps) / q5_eps) * 100
                             data_source = "Yahoo (5季同比)"
                             
-                # 筛网 3：雅虎抠搜到连 5 季度都不给的终极兜底
                 if dynamic_growth_pct is None and info.get('earningsGrowth'):
                     dynamic_growth_pct = info.get('earningsGrowth') * 100
                     data_source = "Yahoo (预期兜底)"
@@ -154,6 +174,10 @@ if __name__ == "__main__":
     all_results = []
     all_alerts = []
     
+    print("="*95)
+    print(" 周期股估值多维监控系统 (带节假日智能拦截)")
+    print("="*95)
+    
     for sym in symbols_to_track:
         result_data, current_pb, active_peg = fetch_stock_data(sym)
         if result_data:
@@ -167,7 +191,16 @@ if __name__ == "__main__":
         pd.set_option('display.unicode.east_asian_width', True)
         pd.set_option('display.width', 1000)
         
-        print("\n📊 【今日数据概览】")
+        print("\n📊 【今日有效数据概览】")
         print(df.to_string(index=False))
         
         for alert in all_alerts: print(alert)
+        
+        # 存入表格
+        import os
+        filename = "valuation_log.csv"
+        file_exists = os.path.isfile(filename)
+        df.to_csv(filename, mode='a', index=False, header=not file_exists)
+        print(f"\n✅ 数据已成功落库至 {filename}")
+    else:
+        print("\n🔵 今日所有监控标的均休市，未生成任何冗余数据。")
