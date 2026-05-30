@@ -29,9 +29,6 @@ jobs:
         pip install yfinance pandas requests
 
     - name: 运行估值监控脚本
-      env:
-        # 这里是整个链路的桥梁：从 GitHub Secrets 里读取密钥并塞入环境变量
-        FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
       run: |
         python  dynamic-peg.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
 
