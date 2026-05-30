@@ -32,17 +32,19 @@ jobs:
       run: |
         python  dynamic-peg.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
 
-    - name: 将新生成的表格和缓存自动推回仓库
+    - name: 将新生成的表格自动推回仓库
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
+        # 💡 暴力修复：不管有没有被屏蔽，先强行加进暂存区！
+        git add -f valuation_log.csv
+        
+        # 然后再判断暂存区里有没有东西
         if [ -n "$(git status --porcelain)" ]; then
-          # 提交 CSV 表格文件
-          git add valuation_log.csv
           git commit -m "🤖 自动更新: 周期股估值数据表格 [$(date +'%Y-%m-%d %H:%M')]"
           git push
           echo "✅ 成功推送最新数据到仓库！"
         else
-          echo "🔵 数据未发生变化，无需推送。"
+          echo "🔵 数据未发生变化，或生成失败。"
         fi
