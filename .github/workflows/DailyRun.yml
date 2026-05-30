@@ -33,7 +33,7 @@ jobs:
         # 这里是整个链路的桥梁：从 GitHub Secrets 里读取密钥并塞入环境变量
         FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
       run: |
-        python valuation_monitor.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
+        python  dynamic-peg.py # ⚠️ 请确保这里的文件名和上面保存的 Python 文件名一致
 
     - name: 将新生成的表格和缓存自动推回仓库
       run: |
