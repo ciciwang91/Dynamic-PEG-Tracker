@@ -1,68 +1,12 @@
-import os
-import json
-import re
 from datetime import datetime
-import yfinance as yf
+import re
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-
-# ==========================================
-# 🔑 核心密钥与缓存配置 (给美股 FMP 引擎用)
-# ==========================================
-FMP_API_KEY = os.environ.get("FMP_API_KEY") 
-CACHE_DIR = "./fmp_cache"
-
-def get_fmp_historical_eps_with_cache(symbol, limit=10):
-    """引擎 A (美股主战)：FMP 深度财务提取与本地额度保护"""
-    if not FMP_API_KEY:
-        print("  [!] 提示: 未检测到 FMP_API_KEY，跳过 FMP 请求。")
-        return None
-        
-    # 💡 [关键修复]：自动清洗 GitHub Secrets 可能带来的隐形换行符和空格
-    clean_key = FMP_API_KEY.strip()
-
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    cache_filename = f"{CACHE_DIR}/eps_{symbol}_{today_str}.json"
-
-    if os.path.exists(cache_filename):
-        print(f"  -> 📂 [缓存命中] 从本地读取 {symbol} 财务，消耗 0 额度。")
-        with open(cache_filename, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-    url = f"https://financialmodelingprep.com/api/v3/income-statement/{symbol}?period=quarter&limit={limit}&apikey={clean_key}"
-    
-    try:
-        # 打印脱敏后的 Key，确认到底传了什么过去
-        safe_key = f"{clean_key[:5]}***{clean_key[-3:]}" if len(clean_key) > 8 else "INVALID"
-        print(f"  -> 🌐 [FMP请求] 使用 Key: {safe_key}")
-        
-        response = requests.get(url, timeout=10)
-        
-        # 💡 [不再静默]：强行打印 FMP 的真实嘴脸
-        print(f"  -> 🐞 [DEBUG] FMP 状态码: {response.status_code}")
-        if response.status_code != 200:
-            print(f"  -> 🐞 [DEBUG] FMP 报错详情: {response.text[:250]}")
-            return None
-            
-        data = response.json()
-        if isinstance(data, list) and len(data) > 0:
-            valid_eps = [item.get('eps') for item in data if item.get('eps') is not None]
-            with open(cache_filename, 'w', encoding='utf-8') as f:
-                json.dump(valid_eps, f, ensure_ascii=False, indent=4)
-            return valid_eps
-            
-        print(f"  -> 🐞 [DEBUG] FMP 没报错，但返回了空数据或格式不对: {str(data)[:250]}")
-        return None
-    except Exception as e:
-        print(f"  [!] FMP 接口异常: {e}")
-        return None
+import yfinance as yf
 
 def get_naver_valuation_and_growth(symbol):
-    """引擎 B (韩股主战)：Naver 深度爬虫，直接抓表格算增速"""
+    """韩国本土爬虫：抓取 PE、PB 及最新一季 EPS 同比增速"""
     code = symbol.replace('.KS', '')
     url = f"https://finance.naver.com/item/main.naver?code={code}"
     headers = {
@@ -80,11 +24,18 @@ def get_naver_valuation_and_growth(symbol):
         if pbr_tag: pb_val = float(pbr_tag.text.replace(',', ''))
 
         eps_row = None
-        for th in soup.find_all('th'):
+        for th in soup.find_all('th', class_=re.compile('.*')):
             if 'EPS(원)' in th.text:
                 eps_row = th.parent
                 break
         
+        if not eps_row:
+            for tr in soup.find_all('tr'):
+                th = tr.find('th')
+                if th and 'EPS(원)' in th.text:
+                    eps_row = tr
+                    break
+
         if eps_row:
             raw_eps = []
             for td in eps_row.find_all('td'):
@@ -92,7 +43,6 @@ def get_naver_valuation_and_growth(symbol):
                 if val and re.match(r'^-?\d+(\.\d+)?$', val):
                     raw_eps.append(float(val))
             
-            # 提取最后几个季度的数字，对比今年和去年同期
             if len(raw_eps) >= 5:
                 latest_q_eps = raw_eps[-1]
                 last_y_q_eps = raw_eps[-5]
@@ -100,13 +50,13 @@ def get_naver_valuation_and_growth(symbol):
                     growth_pct = ((latest_q_eps - last_y_q_eps) / last_y_q_eps) * 100
 
         return pe_val, pb_val, growth_pct
-    except Exception as e:
-        print(f"  [!] Naver 爬取失败: {e}")
+    except Exception:
         return None, None, None
 
 def fetch_stock_data(symbol):
+    """榨干雅虎价值引擎：尝试 8 季 TTM -> 降级 5 季同比 -> 韩股 Naver"""
     try:
-        print(f"\n正在获取 {symbol} 的数据...")
+        print(f"正在获取 {symbol} 的数据...")
         ticker = yf.Ticker(symbol)
         info = ticker.info
         
@@ -118,41 +68,56 @@ def fetch_stock_data(symbol):
         
         dynamic_growth_pct = None
         dynamic_peg = None
-        data_source = "Yahoo (兜底)"
-
-        # 💡 [智能分流核心] 
+        data_source = "N/A"
+        
         if symbol.endswith('.KS'):
-            # 🇰🇷 韩股：直接绕过 FMP，走 Naver 爬虫
-            print(f"  -> 🧭 路由: 检测为韩股，启动 Naver 深度抓取...")
+            print(f"  -> 启动 Naver 深度爬虫...")
             naver_pe, naver_pb, naver_growth = get_naver_valuation_and_growth(symbol)
             if naver_pe: trailing_pe = naver_pe
             if naver_pb: pb_ratio = naver_pb
             if naver_growth: 
                 dynamic_growth_pct = naver_growth
-                data_source = "Naver"
-                print(f"  -> 📈 [Naver] 成功计算韩股真实增速: {dynamic_growth_pct:.2f}%")
+                data_source = "Naver (单季同比)"
         else:
-            # 🇺🇸 美股：坚决使用 FMP 获取完美 8 季度滚动 TTM
-            print(f"  -> 🧭 路由: 检测为美股，启动 FMP 深度财务引擎...")
-            historical_eps = get_fmp_historical_eps_with_cache(symbol, limit=10)
-            if historical_eps and len(historical_eps) >= 8:
-                current_ttm_eps = sum(historical_eps[0:4])
-                prior_ttm_eps = sum(historical_eps[4:8])
-                if current_ttm_eps > 0 and prior_ttm_eps > 0:
-                    dynamic_growth_pct = ((current_ttm_eps - prior_ttm_eps) / prior_ttm_eps) * 100
-                    trailing_pe = current_price / current_ttm_eps
-                    data_source = "FMP (8季滚动)"
-                    print(f"  -> 💎 [FMP] 完美获取 8 季度数据！算出滚动增速: {dynamic_growth_pct:.2f}%")
-            else:
-                # FMP 万一抽风，雅虎兜底
-                earnings_growth = info.get('earningsGrowth')
-                if earnings_growth:
-                    dynamic_growth_pct = earnings_growth * 100
-        
-        # 结算有效 PEG
+            # 💡 [雅虎榨干引擎]
+            try:
+                # 获取尽可能多的季度财报（默认可能只有 4-5 季，但有时会给更多）
+                q_stmt = ticker.quarterly_income_stmt
+                eps_row = None
+                for row_name in ['Basic EPS', 'Diluted EPS', 'BasicEPS', 'DilutedEPS']:
+                    if row_name in q_stmt.index:
+                        eps_row = q_stmt.loc[row_name].dropna()
+                        break
+                
+                if eps_row is not None:
+                    # 筛网 1：如果大发慈悲给了 8 季度以上，算完美 TTM 滚动
+                    if len(eps_row) >= 8:
+                        # 雅虎的数据通常从新到旧排列
+                        current_ttm_eps = eps_row.iloc[0:4].sum()
+                        prior_ttm_eps = eps_row.iloc[4:8].sum()
+                        if current_ttm_eps > 0 and prior_ttm_eps > 0:
+                            dynamic_growth_pct = ((current_ttm_eps - prior_ttm_eps) / prior_ttm_eps) * 100
+                            data_source = "Yahoo (8季 TTM)"
+                            print(f"  -> 💎 惊喜！雅虎给足了 8 季度，成功计算 TTM 滚动增速。")
+                            
+                    # 筛网 2：如果只有 5-7 个季度，算单季同比兜底
+                    elif len(eps_row) >= 5:
+                        q1_eps = eps_row.iloc[0] # 最新季
+                        q5_eps = eps_row.iloc[4] # 去年同期
+                        if q1_eps > 0 and q5_eps > 0:
+                            dynamic_growth_pct = ((q1_eps - q5_eps) / q5_eps) * 100
+                            data_source = "Yahoo (5季同比)"
+                            
+                # 筛网 3：雅虎抠搜到连 5 季度都不给的终极兜底
+                if dynamic_growth_pct is None and info.get('earningsGrowth'):
+                    dynamic_growth_pct = info.get('earningsGrowth') * 100
+                    data_source = "Yahoo (预期兜底)"
+            except Exception:
+                pass
+
         if dynamic_growth_pct and trailing_pe and dynamic_growth_pct > 0:
             dynamic_peg = trailing_pe / dynamic_growth_pct
-
+            
         currency = info.get('currency', 'KRW' if symbol.endswith('.KS') else 'USD')
         formatted_price = f"{current_price} {currency}" if current_price else "N/A"
         
@@ -163,7 +128,7 @@ def fetch_stock_data(symbol):
             "P/B": round(pb_ratio, 2) if pb_ratio else "N/A",
             "PE(TTM)": round(trailing_pe, 2) if trailing_pe else "N/A",
             "PE(Fwd)": round(forward_pe, 2) if forward_pe else "N/A",
-            "Dyn. Growth": f"{round(dynamic_growth_pct, 2)}%" if dynamic_growth_pct else "N/A",
+            "Growth": f"{round(dynamic_growth_pct, 2)}%" if dynamic_growth_pct else "N/A",
             "Static PEG": round(static_peg, 3) if (static_peg and static_peg > 0) else "N/A",
             "Dynamic PEG": round(dynamic_peg, 3) if dynamic_peg else "N/A",
             "Source": data_source
@@ -177,21 +142,17 @@ def fetch_stock_data(symbol):
 def analyze_signals(symbol, pb, peg):
     alerts = []
     if pb and isinstance(pb, (int, float)):
-        if pb >= 2.4: alerts.append(f"🔴 [{symbol} 危险] P/B = {pb:.2f} 已达周期历史极高位！")
-        elif pb >= 2.0: alerts.append(f"🟠 [{symbol} 预警] P/B = {pb:.2f} 进入高估值区间。")
+        if pb >= 2.4: alerts.append(f"🔴 [{symbol}] P/B = {pb:.2f} 极高风险。")
+        elif pb >= 2.0: alerts.append(f"🟠 [{symbol}] P/B = {pb:.2f} 估值偏高。")
     if peg and isinstance(peg, (int, float)):
-        if peg > 2.0: alerts.append(f"🟡 [{symbol} 过热] 动态 PEG = {peg:.2f}，估值透支。")
-        elif 0 < peg <= 1.0: alerts.append(f"🟢 [{symbol} 价值] 动态 PEG = {peg:.2f}，黄金击球区！")
+        if peg > 2.0: alerts.append(f"🟡 [{symbol}] 动态 PEG = {peg:.2f}，注意回撤。")
+        elif 0 < peg <= 1.0: alerts.append(f"🟢 [{symbol}] 动态 PEG = {peg:.2f}，黄金买点！")
     return alerts
 
 if __name__ == "__main__":
-    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA","LITE"] 
+    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA", "LITE"] 
     all_results = []
     all_alerts = []
-    
-    print("="*100)
-    print(" 周期股估值多维监控系统 (FMP 美股 + Naver 韩股 智能路由版)")
-    print("="*100)
     
     for sym in symbols_to_track:
         result_data, current_pb, active_peg = fetch_stock_data(sym)
@@ -202,7 +163,6 @@ if __name__ == "__main__":
     if all_results:
         df = pd.DataFrame(all_results)
         df = df.fillna("N/A") 
-        
         pd.set_option('display.unicode.ambiguous_as_wide', True)
         pd.set_option('display.unicode.east_asian_width', True)
         pd.set_option('display.width', 1000)
@@ -210,11 +170,4 @@ if __name__ == "__main__":
         print("\n📊 【今日数据概览】")
         print(df.to_string(index=False))
         
-        print("\n💡 【系统策略分析】")
         for alert in all_alerts: print(alert)
-        if not all_alerts: print("🟢 所有监控标的估值均未触及高危预警线。")
-            
-        filename = "valuation_log.csv"
-        file_exists = os.path.isfile(filename)
-        df.to_csv(filename, mode='a', index=False, header=not file_exists)
-        print(f"\n✅ 数据已成功落库至 {filename}")
