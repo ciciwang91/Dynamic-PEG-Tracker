@@ -39,14 +39,16 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
-        # 💡 暴力修复：不管有没有被屏蔽，先强行加进暂存区！
-        git add -f valuation_log.csv
-        
-        # 然后再判断暂存区里有没有东西
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "🤖 自动更新: 周期股估值数据表格 [$(date +'%Y-%m-%d %H:%M')]"
-          git push
-          echo "✅ 成功推送最新数据到仓库！"
+        # 💡 防弹逻辑：先检查今天 Python 到底有没有成功生成文件
+        if [ -f "valuation_log.csv" ]; then
+          git add -f valuation_log.csv
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "🤖 自动更新: 周期股估值数据表格 [$(date +'%Y-%m-%d %H:%M')]"
+            git push
+            echo "✅ 成功推送最新数据到仓库！"
+          else
+            echo "🔵 数据未发生变化，无需推送。"
+          fi
         else
-          echo "🔵 数据未发生变化，或生成失败。"
+          echo "⚠️ 警告：valuation_log.csv 文件不存在。可能是今天所有数据抓取均失败，跳过上传步骤。"
         fi
