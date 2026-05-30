@@ -18,6 +18,9 @@ def get_fmp_historical_eps_with_cache(symbol, limit=10):
     if not FMP_API_KEY:
         print("  [!] 提示: 未检测到 FMP_API_KEY，跳过 FMP 请求。")
         return None
+        
+    # 💡 [关键修复]：自动清洗 GitHub Secrets 可能带来的隐形换行符和空格
+    clean_key = FMP_API_KEY.strip()
 
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR)
@@ -30,11 +33,19 @@ def get_fmp_historical_eps_with_cache(symbol, limit=10):
         with open(cache_filename, 'r', encoding='utf-8') as f:
             return json.load(f)
 
-    url = f"https://financialmodelingprep.com/api/v3/income-statement/{symbol}?period=quarter&limit={limit}&apikey={FMP_API_KEY}"
+    url = f"https://financialmodelingprep.com/api/v3/income-statement/{symbol}?period=quarter&limit={limit}&apikey={clean_key}"
     
     try:
+        # 打印脱敏后的 Key，确认到底传了什么过去
+        safe_key = f"{clean_key[:5]}***{clean_key[-3:]}" if len(clean_key) > 8 else "INVALID"
+        print(f"  -> 🌐 [FMP请求] 使用 Key: {safe_key}")
+        
         response = requests.get(url, timeout=10)
+        
+        # 💡 [不再静默]：强行打印 FMP 的真实嘴脸
+        print(f"  -> 🐞 [DEBUG] FMP 状态码: {response.status_code}")
         if response.status_code != 200:
+            print(f"  -> 🐞 [DEBUG] FMP 报错详情: {response.text[:250]}")
             return None
             
         data = response.json()
@@ -43,6 +54,8 @@ def get_fmp_historical_eps_with_cache(symbol, limit=10):
             with open(cache_filename, 'w', encoding='utf-8') as f:
                 json.dump(valid_eps, f, ensure_ascii=False, indent=4)
             return valid_eps
+            
+        print(f"  -> 🐞 [DEBUG] FMP 没报错，但返回了空数据或格式不对: {str(data)[:250]}")
         return None
     except Exception as e:
         print(f"  [!] FMP 接口异常: {e}")
