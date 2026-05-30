@@ -28,7 +28,7 @@ jobs:
           
           
       - name: Run Python Tracker
-        run: python PEG-tracker.py
+        run: python dynamic-peg.py
         
       - name: Commit and Push CSV updates
         run: |
@@ -42,7 +42,7 @@ jobs:
           
           
           # 提交更改（如果数据没变导致无可提交内容，|| exit 0 可防止工作流报错终止）
-          git commit -m "Auto-update SK Hynix valuation log [skip ci]" || exit 0
+          git commit -m "Auto-update Stocks valuation log [skip ci]" || exit 0
           
           # 推送到仓库
           git push
