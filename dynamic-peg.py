@@ -174,7 +174,7 @@ def analyze_signals(symbol, pb, peg):
     return alerts
 
 if __name__ == "__main__":
-    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA", "LITE"] 
+    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA", "FN","COHR"] 
     all_results = []
     all_alerts = []
     
@@ -185,6 +185,7 @@ if __name__ == "__main__":
     for sym in symbols_to_track:
         result_data, current_pb, active_peg = fetch_stock_data(sym)
         if result_data:
+            
             all_results.append(result_data)
             all_alerts.extend(analyze_signals(sym, current_pb, active_peg))
             
