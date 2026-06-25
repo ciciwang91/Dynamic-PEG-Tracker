@@ -174,7 +174,7 @@ def analyze_signals(symbol, pb, peg):
     return alerts
 
 if __name__ == "__main__":
-    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA", "AVGO","COHR"] 
+    symbols_to_track = ["000660.KS", "005930.KS", "MU", "NVDA", "MRVL","COHR"] 
     all_results = []
     all_alerts = []
     
